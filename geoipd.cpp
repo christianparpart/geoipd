@@ -1,6 +1,9 @@
-// performance on my ultrabook, lookup 4.2.2.1:
-// - 333.000k per second in-process
-// - 76k per second over UDP
+// This file is part of the "geoipd" project
+//   (c) 2009-2014 Christian Parpart <trapni@gmail.com>
+//
+// Licensed under the MIT License (the "License"); you may not use this
+// file except in compliance with the License. You may obtain a copy of
+// the License at: http://opensource.org/licenses/MIT
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -11,9 +14,9 @@
 #include <vector>
 #include <fstream>
 
-static inline uint32_t make_ipnum(const std::string& ip) {
+static inline uint32_t make_ipnum(const char* ip) {
   in_addr addr;
-  inet_aton(ip.c_str(), &addr);
+  inet_aton(ip, &addr);
   return static_cast<uint32_t>(htonl(addr.s_addr));
 }
 
@@ -22,7 +25,7 @@ struct IPRange {
   uint32_t second;
   std::string country;
 
-  IPRange(const std::string& a, const std::string& b, const std::string& c)
+  IPRange(const char* a, const char* b, const char* c)
       : first(make_ipnum(a)), second(make_ipnum(b)), country(c) {}
   bool operator<(uint32_t ip) const { return second < ip; }
   bool operator>(uint32_t ip) const { return ip < first; }
@@ -35,7 +38,7 @@ void die(const char* msg) {
   exit(1);
 }
 
-void load(GeoipVec* geoip, const std::string& path) {
+void load(GeoipVec* geoip, const char* path) {
   std::ifstream ifs(path);
   if (ifs.good() == false) die("could not open geoip db");
 
@@ -48,9 +51,8 @@ void load(GeoipVec* geoip, const std::string& path) {
   }
 }
 
-const IPRange* lookup(const GeoipVec& geoip, const std::string& ip) {
+const IPRange* lookup(const GeoipVec& geoip, const char* ip) {
   uint32_t ipn = make_ipnum(ip);
-  IPRange* res = nullptr;
   size_t left = 0;
   size_t right = geoip.size() - 1;
 
@@ -73,24 +75,27 @@ int main(int argc, const char** argv) {
   load(&geoip, argc == 2 ? argv[1] : "geoip.csv"); // file must be sorted
 
   int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-  struct sockaddr_in servaddr;
+  sockaddr_in servaddr;
   memset(&servaddr, 0, sizeof(servaddr));
 
   servaddr.sin_family = AF_INET;
   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
   servaddr.sin_port = htons(1337);
-  if (bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)))
+  if (bind(sockfd, (sockaddr *)&servaddr, sizeof(servaddr)))
     die(strerror(errno));
 
   for (;;) {
-    struct sockaddr_in cliaddr;
+    sockaddr_in cliaddr;
     socklen_t len = sizeof(cliaddr);
     char buf[1024];
-    int n = recvfrom(sockfd, buf, 1000, 0, (struct sockaddr *)&cliaddr, &len);
+    int n = recvfrom(sockfd, buf, 1000, 0, (sockaddr *)&cliaddr, &len);
     if (n < 0) {
       perror("recvfrom");
-    } else if (const IPRange* res = lookup(geoip, std::string(buf, n))) {
-      sendto(sockfd, res->country.data(), res->country.size(), 0, (sockaddr *)&cliaddr, sizeof(cliaddr));
+    } else {
+      buf[n] = '\0';
+      if (const IPRange* res = lookup(geoip, buf)) {
+        sendto(sockfd, res->country.data(), res->country.size(), 0, (sockaddr *)&cliaddr, sizeof(cliaddr));
+      }
     }
   }
 
